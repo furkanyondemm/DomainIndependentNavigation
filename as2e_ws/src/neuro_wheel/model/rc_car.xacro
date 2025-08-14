@@ -1,0 +1,542 @@
+<?xml version="1.0"?>
+
+<robot name="racecar" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <!-- Degree-to-radian conversions -->
+  <xacro:property name="degrees_45" value="0.785398163"/>  <!-- ja -->
+  <xacro:property name="degrees_90" value="1.57079633"/>   <!-- ja -->
+  <xacro:property name="degrees_180" value="3.14159265"/>
+
+  <!-- chassis_length is measured along the x axis, chassis_width
+       along the y axis, and chassis_height along the z axis. -->
+  <xacro:property name="chassis_length" value="0.3302"/>    
+  <xacro:property name="chassis_width" value="0.2032"/>
+  <xacro:property name="chassis_height" value="0.1"/>
+  <xacro:property name="chassis_mass" value="6.788"/>
+  <xacro:property name="ground_offset" value="0.04" />
+  <xacro:property name="sensor_offset" value="0.05" />
+  <xacro:property name="wheel_length" value="0.0381" />
+  <xacro:property name="wheel_radius" value="0.0508" />
+  <xacro:property name="body_mass" value="${chassis_mass}"/>
+  <!--xacro:property name="wheel_mass" value="${wheel_density*pi_const*wheel_link_radius*wheel_link_radius*wheel_link_length}"/-->
+
+  <!-- Properties of the wheel pose -->
+  <xacro:property name="front_wheel_x" value="${chassis_length}"/>
+  <xacro:property name="front_wheel_y" value="${(wheel_length+chassis_width)/2}"/>
+  <xacro:property name="front_wheel_z" value="${wheel_radius}"/>
+
+  <xacro:property name="rear_wheel_x" value="0"/>
+  <xacro:property name="rear_wheel_y" value="${(wheel_length+chassis_width)/2}"/>
+  <xacro:property name="rear_wheel_z" value="${wheel_radius}"/>
+
+  <!-- hub_dia and tire_dia are the diameters of the hub and tire,
+       respectively. hex_hub_depth is the distance that the hex hub is
+       inset from the outer edge of the tire. It is set so that each wheel
+       is a "zero offset" wheel. hex_hub_depth = tire_width / 2 -
+       axle_length. -->
+  <xacro:property name="hub_dia" value="0.09652"/>             
+  <xacro:property name="tire_dia" value="0.1016"/>            
+  <xacro:property name="tire_width" value="0.0381"/>               
+  <xacro:property name="hex_hub_depth" value="0.01445"/>            
+  <xacro:property name="wheel_mass" value="0.29"/>                  
+
+  <!-- The specifications for a Titan(R) 550 motor could not be found, so the
+       stall torque of a Mabuchi Motor(R) RS-550VC-7525 motor was used instead.
+
+       num_spur_gear_teeth = 68
+       num_pinion_gear_teeth = 19
+       final_gear_ratio = (num_spur_gear_teeth / num_pinion_gear_teeth) *
+         5.22 = 18.68
+       stall_torque = 0.549 N m
+       axle_eff_limit = ((2 * stall_torque) * final_gear_ratio) / 4 =
+         5.12766 N m
+
+       max_speed = 40 mph (30+ mph) = 17.8816 m/s
+       axle_vel_limit = (2 * pi) * (max_speed / (pi * tire_dia)) =
+         244.8696 rad/s -->
+  <xacro:property name="axle_eff_limit" value="5.12766"/>
+  <xacro:property name="axle_vel_limit" value="244.8696"/>
+
+  <!-- These constants are used to simulate a Traxxas 2056 servo operated at
+       6 V. servo_stall_torque is measured in N m. servo_no_load_speed is
+       measured in rad/s. -->
+  <xacro:property name="servo_stall_torque" value="0.5649"/>
+  <xacro:property name="servo_no_load_speed" value="4.553"/>
+
+  <material name="battery_mat">
+    <color rgba="0 0 1 1"/>
+  </material>
+  <material name="chassis_mat">
+    <color rgba="0.5 0.5 0.5 1"/>
+  </material>
+  <material name="tire_mat">
+    <color rgba="0 0 0 1"/>
+  </material>
+
+  <material name="black">
+      <color rgba="0 0 0 1"/>
+  </material>
+
+  <!-- Null inertial element. This is needed to make the model work with
+       Gazebo. -->
+  <xacro:macro name="null_inertial">
+    <inertial>
+      <mass value="0.001"/>
+      <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+  </xacro:macro>
+
+
+  <!-- Inertia of a thick-walled cylindrical tube with open ends. Height is
+       measured along the z axis, which is the tube's axis. inner_rad and
+       outer_rad are the tube's inner and outer radii, respectively. -->
+  <xacro:macro name="thick_walled_tube_inertial"
+               params="inner_rad outer_rad height mass">
+    <inertial>
+      <mass value="${mass}"/>
+      <inertia ixx="${(1 / 12) * mass * (3 * (inner_rad * inner_rad +
+                    outer_rad * outer_rad) + height * height)}"
+               ixy="0" ixz="0"
+               iyy="${(1 / 12) * mass * (3 * (inner_rad * inner_rad +
+                    outer_rad * outer_rad) + height * height)}"
+               iyz="0"
+               izz="${mass * (inner_rad * inner_rad +
+                    outer_rad * outer_rad) / 2}"/>
+    </inertial>
+  </xacro:macro>
+
+   <!-- front wheel -->
+  <xacro:macro name="front_wheel" params="lr_prefix fr_prefix lr_reflect">
+
+    <link name="${lr_prefix}_steering_link">
+      <xacro:null_inertial/>
+    </link>
+
+    <joint name="${lr_prefix}_steering_joint" type="revolute">
+      <origin xyz="${fr_reflect * front_wheel_x} ${lr_reflect * front_wheel_y} ${-front_wheel_z}" rpy="0 ${degrees_90} 0"/>
+      <parent link="chassis"/>
+      <child link="${lr_prefix}_steering_link"/>
+      <axis xyz="-1 0 0"/>
+      <limit lower="${-degrees_45}" upper="${degrees_45}"
+            effort="${servo_stall_torque}" velocity="${servo_no_load_speed}"/>
+      <!--dynamics damping="150" friction="0.1"/-->
+    </joint>
+
+    <link name="${lr_prefix}_${fr_prefix}_wheel">
+      <visual>
+        <origin xyz="0 0 ${lr_reflect * ((tire_width / 2 - hex_hub_depth))}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${tire_dia / 2}" length="${tire_width}"/>
+        </geometry>
+        <material name="black" />
+      </visual>
+      <collision>
+        <origin xyz="0 0 ${lr_reflect * ((tire_width / 2 - hex_hub_depth))}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${tire_dia / 2}" length="${tire_width}"/>
+        </geometry>
+      </collision>
+      <xacro:thick_walled_tube_inertial
+          inner_rad="${hub_dia / 2}" outer_rad="${tire_dia / 2}"
+          height="${tire_width}" mass="${wheel_mass}"/>
+    </link>
+
+    <joint name="${lr_prefix}_${fr_prefix}_axle" type="continuous">
+      <parent link="${lr_prefix}_steering_link"/>
+      <child link="${lr_prefix}_${fr_prefix}_wheel"/>
+      <origin xyz="0 0 0" rpy="1.5708 0 0" />
+      <axis xyz="0 0 -1"/>
+      <limit effort="${axle_eff_limit}" velocity="${axle_vel_limit}"/>
+      <!--dynamics damping="150" friction="0.1"/-->
+    </joint>
+
+    <gazebo reference="${lr_prefix}_${fr_prefix}_wheel">
+      <material>Gazebo/Black</material>
+    </gazebo>
+
+  </xacro:macro>
+
+
+  <!-- rear wheel -->
+  <xacro:macro name="rear_wheel" params="lr_prefix fr_prefix lr_reflect">
+
+    <link name="${lr_prefix}_${fr_prefix}_wheel">
+      <visual>
+        <origin xyz="0 0 ${lr_reflect * ((tire_width / 2 - hex_hub_depth))}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${tire_dia / 2}" length="${tire_width}"/>
+        </geometry>
+        <material name="black" />
+      </visual>
+
+      <collision>
+        <origin xyz="0 0 ${lr_reflect * ((tire_width / 2 - hex_hub_depth))}" rpy="0 0 0"/>
+        <geometry>
+          <cylinder radius="${tire_dia / 2}" length="${tire_width}"/>
+        </geometry>
+      </collision>
+
+      <xacro:thick_walled_tube_inertial
+          inner_rad="${hub_dia / 2}" outer_rad="${tire_dia / 2}"
+          height="${tire_width}" mass="${wheel_mass}"/>
+    </link>
+
+    <joint name="${lr_prefix}_${fr_prefix}_axle" type="continuous">
+      <parent link="chassis"/>
+      <child link="${lr_prefix}_${fr_prefix}_wheel"/>
+      <origin xyz="${fr_reflect * rear_wheel_x} ${lr_reflect * rear_wheel_y} ${-rear_wheel_z}" rpy="1.5708 0 0"/>
+      <axis xyz="0 0 -1"/>
+      <limit effort="${axle_eff_limit}" velocity="${axle_vel_limit}"/>
+      <!--dynamics damping="150" friction="0.1"/-->
+
+    </joint>
+
+    <gazebo reference="${lr_prefix}_${fr_prefix}_wheel">
+      <material>Gazebo/Black</material>
+    </gazebo>
+
+  </xacro:macro>
+
+  <xacro:macro name="front_wheel_to_base" params="lr_prefix fr_prefix lr_reflect fr_reflect">      
+    <xacro:front_wheel lr_prefix="${lr_prefix}" fr_prefix="${fr_prefix}" lr_reflect="${lr_reflect}"/>
+  </xacro:macro>
+
+  <xacro:macro name="rear_wheel_to_base" params="lr_prefix fr_prefix lr_reflect fr_reflect">
+    <xacro:rear_wheel lr_prefix="${lr_prefix}" fr_prefix="${fr_prefix}" lr_reflect="${lr_reflect}"/>
+  </xacro:macro>
+
+  <!-- base_link must have geometry so that its axes can be displayed in
+       rviz. -->
+  <link name="base_link"/>
+
+  <!-- Chassis -->
+  <link name="chassis">
+    <visual>
+      <origin xyz="${chassis_length/2} 0 ${ground_offset}"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="chassis_mat"/>
+    </visual>
+
+    <collision>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+
+    <inertial>
+        <origin xyz="${chassis_length/2} 0 ${ground_offset}"/>
+        <mass value="${body_mass}"/>
+        <inertia
+        ixx="${(1/12)*chassis_mass*(chassis_width+chassis_height*chassis_height)}"
+        ixy="0"
+        ixz="0"
+        iyy="${(1/12)*chassis_mass*(chassis_length*chassis_length+chassis_height*chassis_height)}"
+        iyz="0"
+        izz="${(1/12)*chassis_mass*(chassis_width*chassis_width+chassis_length*chassis_length)}"/>
+    </inertial>
+    
+  </link>
+  <gazebo reference="chassis">
+    <material>Gazebo/Grey</material>
+  </gazebo>
+
+  <joint name="base_link_to_chassis" type="fixed">
+    <parent link="base_link"/>
+    <child link="chassis"/>
+  </joint>
+
+  <!-- Wheels -->
+  <xacro:front_wheel_to_base lr_prefix="left" fr_prefix="front" lr_reflect="1" fr_reflect="1" />
+  <xacro:front_wheel_to_base lr_prefix="right" fr_prefix="front" lr_reflect="-1" fr_reflect="1" />
+  <xacro:rear_wheel_to_base lr_prefix="left" fr_prefix="rear" lr_reflect="1" fr_reflect="-1" />
+  <xacro:rear_wheel_to_base lr_prefix="right" fr_prefix="rear" lr_reflect="-1" fr_reflect="-1" />
+
+  <!-- IMU Sensor Link -->
+  <link name="imu_link">
+    <inertial>
+        <mass value="0.001"/>
+        <origin xyz="${chassis_length/2} 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+      <parent link="chassis"/>
+      <child link="imu_link"/>
+      <origin xyz="${chassis_length/2} 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="imu_link">
+    <gravity>true</gravity>
+    <sensor name="imu_sensor" type="imu">
+        <always_on>true</always_on>
+        <update_rate>100</update_rate>
+        <imu>
+            <angular_velocity>
+                <x>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.0002</stddev>
+                    </noise>
+                </x>
+                <y>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.0002</stddev>
+                    </noise>
+                </y>
+                <z>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.0002</stddev>
+                    </noise>
+                </z>
+            </angular_velocity>
+            <linear_acceleration>
+                <x>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.017</stddev>
+                    </noise>
+                </x>
+                <y>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.017</stddev>
+                    </noise>
+                </y>
+                <z>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>0.017</stddev>
+                    </noise>
+                </z>
+            </linear_acceleration>
+        </imu>
+        <plugin name="imu_controller" filename="libgazebo_ros_imu_sensor.so">
+            <initial_orientation_as_reference>false</initial_orientation_as_reference>
+            <ros>
+                <remapping>~/out:=imu/data</remapping>
+            </ros>
+        </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- GPS Sensor Link -->
+  <link name="gps_link">
+    <inertial>
+        <mass value="0.001"/>
+        <origin xyz="${chassis_length/2} 0 0" rpy="0 0 0"/>
+        <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+    </inertial>
+  </link>
+
+  <joint name="$gps_joint" type="fixed">
+    <parent link="chassis"/>
+    <child link="gps_link"/>
+    <origin xyz="${chassis_length/2} 0 0" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="gps_link">
+    <sensor name="gps_sensor" type="gps">
+        <always_on>true</always_on>
+        <update_rate>10.0</update_rate>
+        <gps>
+            <position_sensing>
+                <horizontal>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>1e-2</stddev>
+                    </noise>
+                </horizontal>
+                <vertical>
+                    <noise type="gaussian">
+                        <mean>0.0</mean>
+                        <stddev>1</stddev>
+                    </noise>
+                </vertical>
+            </position_sensing>
+        </gps>
+        <plugin name="gps_controller" filename="libgazebo_ros_gps_sensor.so">
+            <ros>
+              <remapping>~/out:=gps/fix</remapping>
+            </ros>
+            <frame_name>gps_link</frame_name>
+        </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- Kamera Sensor Link -->
+  <link name="camera_link">
+    <inertial>
+      <mass value="0.001" />
+      <origin xyz="${chassis_length/2} 0 ${chassis_height}"/>
+      <inertia ixx="0.0001" ixy="0" ixz="0" iyy="0.0001" iyz="0" izz="0.0001" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="file://$(find neuro_wheel)/meshes/kamera/orbbec_astra_camera.dae" scale="0.5 0.5 0.5"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.001 0.001 0.001"/>
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+    </collision>  
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="chassis" />
+    <child link="camera_link" />
+    <!--origin xyz="0.34 0 ${chassis_height-sensor_offset}" rpy="0 0 0" /-->
+    <origin xyz="0.34 0 0.55" rpy="0 0.523 0" />   <!-- Height von Kamera -> 0.2 !! für 720p 0.35-->   <!--0.35 normal, im Lab 0.16-->
+  </joint>
+
+  <gazebo reference="camera_link">
+    <sensor name="camera_sensor" type="camera">
+      <always_on>true</always_on>
+      <update_rate>50.0</update_rate>
+      <camera>
+        <horizontal_fov>1.2566370614359172</horizontal_fov> <!--1.780--> <!--1.1694 für Labor-->
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>100</far>
+        </clip>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <remapping>~/image_raw:=camera/image_raw</remapping>
+        </ros>
+        <frame_name>camera_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- Lidar Sensor Link -->
+  <link name="lidar_link">
+      <visual>
+          <geometry>
+              <mesh filename="file://$(find neuro_wheel)/meshes/lidar/hokuyo.dae" scale="1 1 1"/>
+          </geometry>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+      </visual>
+      <collision>
+          <geometry>
+              <cylinder radius="0.005" length="0.01"/>
+          </geometry>
+          <origin xyz="0 0 0" rpy="0 0 0"/>
+      </collision>
+      <inertial>
+          <mass value="0.001"/>
+          <origin xyz="${chassis_length/2} 0 ${ground_offset+chassis_height}" rpy="0 0 0"/>
+          <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+      </inertial>
+  </link>
+
+  <!-- Lidar Joint -->
+  <joint name="lidar_joint" type="fixed">
+      <parent link="chassis"/>
+      <child link="lidar_link"/>
+      <origin xyz="${chassis_length/2} 0 ${sensor_offset+chassis_height/2}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Lidar Sensor Configuration -->
+  <gazebo reference="lidar_link">
+      <sensor type="gpu_ray" name="lidar_sensor"> 
+          <pose>0 0 0 0 0 0</pose>
+          <visualize>false</visualize>
+          <update_rate>20</update_rate>
+          <ray>
+              <scan>
+                  <horizontal>
+                      <samples>720</samples>
+                      <resolution>1</resolution>
+                      <min_angle>-3.14159</min_angle>
+                      <max_angle>3.14159</max_angle>
+                  </horizontal>
+              </scan>
+              <range>
+                  <min>0.1</min>
+                  <max>30.0</max>
+              </range>
+              <noise>
+                  <type>gaussian</type>
+                  <mean>0.0</mean>
+                  <stddev>0.01</stddev>
+              </noise>
+          </ray>
+          <plugin name="lidar_controller" filename="libgazebo_ros_ray_sensor.so">
+              <ros>
+                  <remapping>~/out:=scan</remapping>
+              </ros>
+              <output_type>sensor_msgs/LaserScan</output_type>
+              <frame_name>lidar_link</frame_name>
+          </plugin>
+      </sensor>
+  </gazebo>
+
+ <!-- libgazebo_ros_ackermann_drive -->
+
+  <gazebo>
+
+    <plugin name="gazebo_ros_ackermann_drive" filename="libgazebo_ros_ackermann_drive.so">
+
+      <ros>
+        <!-- <namespace></namespace> -->
+        <remapping>cmd_vel:=cmd_vel</remapping>
+        <remapping>odom:=odom</remapping>
+
+      </ros>
+
+      <update_rate>100.0</update_rate>
+
+      <!-- wheels -->
+      <front_left_joint>left_front_axle</front_left_joint>
+      <front_right_joint>right_front_axle</front_right_joint>
+
+      <rear_left_joint>left_rear_axle</rear_left_joint>
+      <rear_right_joint>right_rear_axle</rear_right_joint>
+
+      <left_steering_joint>left_steering_joint</left_steering_joint>
+      <right_steering_joint>right_steering_joint</right_steering_joint>
+
+      <!-- Max absolute steer angle for tyre in radians-->
+      <!-- Any cmd_vel angular z greater than this would be capped -->
+      <max_steer>1.01</max_steer>
+
+      <!-- Max absolute steering angle of steering wheel -->
+      <max_steering_angle>0.4189</max_steering_angle>
+
+      <!-- Max absolute linear speed in m/s -->
+      <max_speed>7</max_speed>
+
+      <!-- PID tuning -->
+    <left_steering_pid_gain>1500 0 1</left_steering_pid_gain>
+    <left_steering_i_range>0 0</left_steering_i_range>
+    <right_steering_pid_gain>1500 0 1</right_steering_pid_gain>
+    <right_steering_i_range>0 0</right_steering_i_range>
+    <linear_velocity_pid_gain>1000 0 1</linear_velocity_pid_gain>
+    <linear_velocity_i_range>0 0</linear_velocity_i_range>
+
+      <!-- output -->
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+      <publish_distance>false</publish_distance>
+
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_link</robot_base_frame>
+
+    </plugin>
+
+  </gazebo>
+
+</robot>
